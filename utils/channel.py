@@ -7,54 +7,24 @@ from utils.tools import (
     add_url_info,
     remove_cache_info,
     resource_path,
+    write_content_into_txt,
+    get_logger,
 )
 from utils.speed import (
+    get_speed,
     sort_urls_by_speed_and_resolution,
-    is_ffmpeg_installed,
-    speed_cache,
 )
 import os
 from collections import defaultdict
 import re
 from bs4 import NavigableString
-import logging
-from logging.handlers import RotatingFileHandler
 from opencc import OpenCC
-import asyncio
 import base64
 import pickle
 import copy
 import datetime
-
-handler = None
-
-
-def setup_logging():
-    """
-    Setup logging
-    """
-    global handler
-    if not os.path.exists(constants.output_dir):
-        os.makedirs(constants.output_dir)
-    handler = RotatingFileHandler(constants.log_path, encoding="utf-8")
-    logging.basicConfig(
-        handlers=[handler],
-        format="%(message)s",
-        level=logging.INFO,
-    )
-
-
-def cleanup_logging():
-    """
-    Cleanup logging
-    """
-    global handler
-    if handler:
-        for handler in logging.root.handlers[:]:
-            handler.close()
-            logging.root.removeHandler(handler)
-    if os.path.exists(constants.log_path):
-        os.remove(constants.log_path)
+import asyncio
+from logging import INFO
 
 
 def get_name_url(content, pattern, multiline=False, check_url=True):
@@ -116,7 +86,7 @@ def get_channel_items():
             )
 
     if config.open_use_old_result:
-        result_cache_path = resource_path("output/result_cache.pkl")
+        result_cache_path = resource_path(constants.cache_path)
         if os.path.exists(result_cache_path):
             with open(result_cache_path, "rb") as file:
                 old_result = pickle.load(file)
@@ -145,6 +115,8 @@ def format_channel_name(name):
         return name
     cc = OpenCC("t2s")
     name = cc.convert(name)
+    for region in constants.region_list:
+        name = name.replace(f"{region}｜", "")
     name = re.sub(constants.sub_pattern, "", name)
     for old, new in constants.replace_dict.items():
         name = name.replace(old, new)
@@ -167,11 +139,7 @@ def get_channel_results_by_name(name, data):
     Get channel results from data by name
     """
     format_name = format_channel_name(name)
-    cc = OpenCC("s2t")
-    name_s2t = cc.convert(format_name)
-    result1 = data.get(format_name, [])
-    result2 = data.get(name_s2t, [])
-    results = list(dict.fromkeys(result1 + result2))
+    results = data.get(format_name, [])
     return results
 
 
@@ -259,7 +227,7 @@ def get_channel_multicast_result(result, search_result):
                 (
                     add_url_info(
                         f"http://{url}/rtp/{ip}",
-                        f"{result_region}{result_type}{multicast_name}|cache:{url}",
+                        f"{result_region}{result_type}{multicast_name}-cache:{url}",
                     )
                     if config.open_sort
                     else add_url_info(
@@ -287,6 +255,8 @@ def get_results_from_soup(soup, name):
     Get the results from the soup
     """
     results = []
+    if not soup.descendants:
+        return results
     for element in soup.descendants:
         if isinstance(element, NavigableString):
             text = element.get_text(strip=True)
@@ -311,6 +281,8 @@ def get_results_from_multicast_soup(soup, hotel=False):
     Get the results from the multicast soup
     """
     results = []
+    if not soup.descendants:
+        return results
     for element in soup.descendants:
         if isinstance(element, NavigableString):
             text = element.strip()
@@ -404,32 +376,6 @@ def get_results_from_multicast_soup_requests(soup, hotel=False):
     return results
 
 
-def update_channel_urls_txt(cate, name, urls, callback=None):
-    """
-    Update the category and channel urls to the final file
-    """
-    genre_line = cate + ",#genre#\n"
-    filename = "output/result_new.txt"
-
-    if not os.path.exists(filename):
-        open(filename, "w").close()
-
-    with open(filename, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    with open(filename, "a", encoding="utf-8") as f:
-        if genre_line not in content:
-            f.write(genre_line)
-        if urls:
-            for url in urls:
-                if url is not None:
-                    f.write(f"{name},{url}\n")
-                    if callback:
-                        callback()
-        else:
-            f.write(f"{name},url\n")
-
-
 def get_channel_url(text):
     """
     Get the url from text
@@ -486,9 +432,7 @@ def init_info_data(data, cate, name):
         data[cate][name] = []
 
 
-def append_data_to_info_data(
-    info_data, cate, name, data, origin=None, check=True, insert=False
-):
+def append_data_to_info_data(info_data, cate, name, data, origin=None, check=True):
     """
     Append channel data to total info data
     """
@@ -509,14 +453,7 @@ def append_data_to_info_data(
                     or (not check)
                     or (check and check_url_by_patterns(pure_url))
                 ):
-                    if insert:
-                        info_data[cate][name].insert(
-                            0, (url, date, resolution, url_origin)
-                        )
-                    else:
-                        info_data[cate][name].append(
-                            (url, date, resolution, url_origin)
-                        )
+                    info_data[cate][name].append((url, date, resolution, url_origin))
                     urls.append(pure_url)
         except:
             continue
@@ -608,130 +545,64 @@ def append_total_data(
                     )
 
 
-async def sort_channel_list(
-    cate,
-    name,
-    info_list,
-    semaphore,
-    ffmpeg=False,
-    ipv6_proxy=None,
-    callback=None,
-):
-    """
-    Sort the channel list
-    """
-    async with semaphore:
-        data = []
-        try:
-            if info_list:
-                sorted_data = await sort_urls_by_speed_and_resolution(
-                    info_list, ffmpeg=ffmpeg, ipv6_proxy=ipv6_proxy, callback=callback
-                )
-                if sorted_data:
-                    for (url, date, resolution, origin), response_time in sorted_data:
-                        logging.info(
-                            f"Name: {name}, URL: {url}, Date: {date}, Resolution: {resolution}, Response Time: {response_time} ms"
-                        )
-                        data.append((url, date, resolution, origin))
-        except Exception as e:
-            logging.error(f"Error: {e}")
-        finally:
-            return {"cate": cate, "name": name, "data": data}
-
-
 async def process_sort_channel_list(data, ipv6=False, callback=None):
     """
     Processs the sort channel list
     """
     ipv6_proxy = None if (not config.open_ipv6 or ipv6) else constants.ipv6_proxy
-    ffmpeg_installed = is_ffmpeg_installed()
-    if config.open_ffmpeg and not ffmpeg_installed:
-        print("FFmpeg is not installed, using requests for sorting.")
-    is_ffmpeg = config.open_ffmpeg and ffmpeg_installed
-    semaphore = asyncio.Semaphore(5)
     need_sort_data = copy.deepcopy(data)
     process_nested_dict(need_sort_data, seen=set(), flag=r"cache:(.*)", force_str="!")
+    result = {}
+    semaphore = asyncio.Semaphore(10)
+
+    async def limited_get_speed(info, ipv6_proxy, callback):
+        async with semaphore:
+            return await get_speed(info[0], ipv6_proxy=ipv6_proxy, callback=callback)
+
     tasks = [
         asyncio.create_task(
-            sort_channel_list(
-                cate,
-                name,
-                info_list,
-                semaphore,
-                ffmpeg=is_ffmpeg,
+            limited_get_speed(
+                info,
                 ipv6_proxy=ipv6_proxy,
                 callback=callback,
             )
         )
-        for cate, channel_obj in need_sort_data.items()
-        for name, info_list in channel_obj.items()
+        for channel_obj in need_sort_data.values()
+        for info_list in channel_obj.values()
+        for info in info_list
     ]
-    sort_results = await asyncio.gather(*tasks)
-    sort_data = {}
-    for result in sort_results:
-        if result:
-            cate, name, result_data = result["cate"], result["name"], result["data"]
-            append_data_to_info_data(sort_data, cate, name, result_data, check=False)
+    await asyncio.gather(*tasks)
+    logger = get_logger(constants.sort_log_path, level=INFO, init=True)
     for cate, obj in data.items():
         for name, info_list in obj.items():
-            sort_info_list = sort_data.get(cate, {}).get(name, [])
-            sort_urls = {
-                remove_cache_info(sort_url[0])
-                for sort_url in sort_info_list
-                if sort_url and sort_url[0]
-            }
-            for url, date, resolution, origin in info_list:
-                if "$" in url:
-                    info = url.partition("$")[2]
-                    if info and info.startswith("!"):
-                        append_data_to_info_data(
-                            sort_data,
-                            cate,
-                            name,
-                            [(url, date, resolution, origin)],
-                            check=False,
-                            insert=True,
-                        )
-                        continue
-                    matcher = re.search(r"cache:(.*)", info)
-                    if matcher:
-                        cache_key = matcher.group(1)
-                        if not cache_key:
-                            continue
-                        url = remove_cache_info(url)
-                        if url in sort_urls or cache_key not in speed_cache:
-                            continue
-                        cache = speed_cache[cache_key]
-                        if not cache:
-                            continue
-                        response_time, resolution = cache
-                        if response_time and response_time != float("inf"):
-                            append_data_to_info_data(
-                                sort_data,
-                                cate,
-                                name,
-                                [(url, date, resolution, origin)],
-                                check=False,
-                            )
-                            logging.info(
-                                f"Name: {name}, URL: {url}, Date: {date}, Resolution: {resolution}, Response Time: {response_time} ms"
-                            )
-    return sort_data
+            info_list = sort_urls_by_speed_and_resolution(name, info_list, logger)
+            append_data_to_info_data(
+                result,
+                cate,
+                name,
+                info_list,
+                check=False,
+            )
+    return result
 
 
 def write_channel_to_file(data, ipv6=False, callback=None):
     """
     Write channel to file
     """
+    path = "output/result_new.txt"
     if config.open_update_time:
         now = datetime.datetime.now()
         if os.environ.get("GITHUB_ACTIONS"):
             now += datetime.timedelta(hours=8)
         update_time = now.strftime("%Y-%m-%d %H:%M:%S")
-        update_channel_urls_txt("更新时间", f"{update_time}", ["url"])
+        write_content_into_txt(f"更新时间,#genre#", path, newline=False)
+        write_content_into_txt(f"{update_time},url", path)
     no_result_name = []
+    open_empty_category = config.open_empty_category
     for cate, channel_obj in data.items():
         print(f"\n{cate}:", end=" ")
+        write_content_into_txt(f"{cate},#genre#", path)
         channel_obj_keys = channel_obj.keys()
         names_len = len(list(channel_obj_keys))
         for i, name in enumerate(channel_obj_keys):
@@ -740,16 +611,20 @@ def write_channel_to_file(data, ipv6=False, callback=None):
             end_char = ", " if i < names_len - 1 else ""
             print(f"{name}:", len(channel_urls), end=end_char)
             if not channel_urls:
-                no_result_name.append(name)
+                if open_empty_category:
+                    no_result_name.append(name)
                 continue
-            update_channel_urls_txt(cate, name, channel_urls, callback=callback)
+            for url in channel_urls:
+                write_content_into_txt(f"{name},{url}", path, callback=callback)
         print()
-    if no_result_name:
+        write_content_into_txt("", path)
+    if open_empty_category and no_result_name:
         print("\n🈳 No result channel name:")
+        write_content_into_txt("🈳无结果频道,#genre#", path)
         for i, name in enumerate(no_result_name):
             end_char = ", " if i < len(no_result_name) - 1 else ""
             print(name, end=end_char)
-            update_channel_urls_txt("🈳无结果频道", name, [])
+            write_content_into_txt(f"{name},url", path)
         print()
 
 

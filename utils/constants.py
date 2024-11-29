@@ -2,9 +2,13 @@ import os
 
 output_dir = "output"
 
-log_file = "result_new.log"
+result_path = os.path.join(output_dir, "result_new.txt")
 
-log_path = os.path.join(output_dir, log_file)
+cache_path = os.path.join(output_dir, "cache.pkl")
+
+sort_log_path = os.path.join(output_dir, "sort.log")
+
+log_path = os.path.join(output_dir, "log.log")
 
 url_pattern = r"((https?):\/\/)?(\[[0-9a-fA-F:]+\]|([\w-]+\.)+[\w-]+)(:[0-9]{1,5})?(\/[^\s]*)?(\$[^\s]+)?"
 
@@ -16,7 +20,7 @@ txt_pattern = r"^([^,，]+)(?:[,，])(?!#genre#)" + r"(" + url_pattern + r")"
 
 m3u_pattern = r"^#EXTINF:-1.*?(?:，|,)(.*?)\n" + r"(" + url_pattern + r")"
 
-sub_pattern = r"-|_|\((.*?)\)|\（(.*?)\）|\[(.*?)\]|\「(.*?)\」| |｜|频道|普清|标清|高清|HD|hd|超清|超高|超高清|中央|央视|台|电信|联通|移动"
+sub_pattern = r"-|_|\((.*?)\)|\（(.*?)\）|\[(.*?)\]|\「(.*?)\」| |｜|频道|普清|标清|高清|HD|hd|超清|超高|超高清|中央|央视|电视台|台|电信|联通|移动"
 
 replace_dict = {
     "plus": "+",
@@ -52,6 +56,36 @@ replace_dict = {
     "CCTV17农业": "CCTV17",
 }
 
+region_list = [
+    "广东",
+    "北京",
+    "湖南",
+    "湖北",
+    "浙江",
+    "上海",
+    "天津",
+    "江苏",
+    "山东",
+    "河南",
+    "河北",
+    "山西",
+    "陕西",
+    "安徽",
+    "重庆",
+    "福建",
+    "江西",
+    "辽宁",
+    "黑龙江",
+    "吉林",
+    "四川",
+    "云南",
+    "香港",
+    "内蒙古",
+    "甘肃",
+    "海南",
+    "云南",
+]
+
 origin_map = {
     "hotel": "酒店源",
     "multicast": "组播源",
@@ -64,3 +98,5 @@ ipv6_proxy = "http://www.ipv6proxy.net/go.php?u="
 foodie_url = "http://www.foodieguide.com/iptvsearch/"
 
 foodie_hotel_url = "http://www.foodieguide.com/iptvsearch/hoteliptv.php"
+
+waiting_tip = "🔍️未找到结果文件，若已启动更新，请耐心等待更新完成..."
