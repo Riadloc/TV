@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+
 from utils.config import config
 
 
@@ -8,17 +9,16 @@ class PreferUI:
         """
         Init prefer UI
         """
-        origin_type_prefer = [item.lower() for item in config.origin_type_prefer]
         config_options = [
-            {"label_text": f"结果来源优先{i+1}:", "combo_box_value": i}
-            for i in range(len(origin_type_prefer))
+            {"label_text": f"结果来源优先{i + 1}:", "combo_box_value": value}
+            for i, value in enumerate(self.get_origin_type_prefer_index(config.origin_type_prefer))
         ]
         self.origin_type_prefer_options = []
-        for config_option in config_options:
+        for i, config_option in enumerate(config_options):
             option = ConfigOption(root, **config_option)
             option.combo_box.bind(
                 "<<ComboboxSelected>>",
-                option.update_select,
+                lambda event, opt=option, index=i: opt.update_select(event, index),
             )
             option.entry.bind("<KeyRelease>", option.update_input)
             self.origin_type_prefer_options.append(option)
@@ -48,6 +48,35 @@ class PreferUI:
             input.entry.bind("<KeyRelease>", input.update_input)
             self.ipv_type_input.append(input)
 
+        frame_prefer_open_supply = tk.Frame(root)
+        frame_prefer_open_supply.pack(fill=tk.X)
+        self.open_supply_label = tk.Label(
+            frame_prefer_open_supply, text="开启补偿模式:", width=12
+        )
+        self.open_supply_label.pack(side=tk.LEFT, padx=4, pady=8)
+        self.open_supply_var = tk.BooleanVar(value=config.open_supply)
+        self.open_supply_checkbutton = ttk.Checkbutton(
+            frame_prefer_open_supply,
+            variable=self.open_supply_var,
+            onvalue=True,
+            offvalue=False,
+            command=self.update_open_supply,
+        )
+        self.open_supply_checkbutton.pack(side=tk.LEFT, padx=4, pady=8)
+
+    def get_origin_type_prefer_index(self, origin_type_prefer):
+        index_list = [None, None, None, None, None]
+        origin_type_prefer_obj = {
+            "local": 0,
+            "hotel": 1,
+            "multicast": 2,
+            "subscribe": 3,
+            "online_search": 4,
+        }
+        for i, item in enumerate(origin_type_prefer):
+            index_list[i] = origin_type_prefer_obj[item]
+        return index_list
+
     def update_ipv_type_prefer(self, event):
         config.set(
             "Settings",
@@ -55,12 +84,16 @@ class PreferUI:
             self.prefer_ipv_type_combo.get(),
         )
 
+    def update_open_supply(self):
+        config.set("Settings", "open_supply", str(self.open_supply_var.get()))
+
     def change_entry_state(self, state):
         for option in self.origin_type_prefer_options:
             option.change_state(state)
         self.prefer_ipv_type_combo.config(state=state)
         for input in self.ipv_type_input:
             input.change_state(state)
+        self.open_supply_checkbutton.config(state=state)
 
 
 class IpvNumInput:
@@ -87,7 +120,7 @@ class IpvNumInput:
     def update_input(self, event):
         config.set(
             "Settings",
-            f"{ self.ipv_type}_num",
+            f"{self.ipv_type}_num",
             self.entry.get(),
         )
 
@@ -115,6 +148,7 @@ class ConfigOption:
 
         self.combo_box = ttk.Combobox(self.column1)
         self.origin_type_prefer_obj = {
+            "本地源": "local",
             "酒店源": "hotel",
             "组播源": "multicast",
             "订阅源": "subscribe",
@@ -123,33 +157,53 @@ class ConfigOption:
         combo_box_values_name = list(self.origin_type_prefer_obj.keys())
         self.combo_box["values"] = combo_box_values_name
         self.combo_box.pack(side=tk.LEFT, padx=4, pady=8)
-        self.combo_box.current(combo_box_value)
+        origin_type_prefer = config.origin_type_prefer
+        if not origin_type_prefer or combo_box_value is None:
+            self.combo_box.current(None)
+        else:
+            self.combo_box.current(combo_box_value)
 
         self.entry_label = tk.Label(self.column2, text="数量:", width=12)
         self.entry_label.pack(side=tk.LEFT, padx=4, pady=8)
 
         self.entry = tk.Entry(self.column2)
+        if origin_type_prefer and combo_box_value is not None:
+            self.entry.insert(
+                0,
+                config.source_limits[self.origin_type_prefer_obj[self.combo_box.get()]],
+            )
+        self.entry.pack(side=tk.LEFT, padx=4, pady=8)
+
+    def update_select(self, event, index):
+        origin_type_prefer_list = [''] * 5
+        prefer_list = [
+            origin.strip().lower()
+            for origin in config.get(
+                "Settings",
+                "origin_type_prefer",
+                fallback="",
+            ).split(",")
+        ]
+        for i, value in enumerate(prefer_list):
+            origin_type_prefer_list[i] = value
+        select_value = self.origin_type_prefer_obj[
+            self.combo_box.get()
+        ]
+        origin_type_prefer_list[index] = select_value
         self.entry.insert(
             0,
             config.source_limits[self.origin_type_prefer_obj[self.combo_box.get()]],
         )
-        self.entry.pack(side=tk.LEFT, padx=4, pady=8)
-
-    def update_select(self, key):
-        origin_type_prefer_list = [item.lower() for item in config.origin_type_prefer]
-        origin_type_prefer_list[self.combo_box_value] = self.origin_type_prefer_obj[
-            self.combo_box.get()
-        ]
         config.set(
             "Settings",
             "origin_type_prefer",
-            (",").join(origin_type_prefer_list),
+            ",".join(origin_type_prefer_list),
         )
 
     def update_input(self, event):
         config.set(
             "Settings",
-            f"{ self.origin_type_prefer_obj[self.combo_box.get()]}_num",
+            f"{self.origin_type_prefer_obj[self.combo_box.get()]}_num",
             self.entry.get(),
         )
 

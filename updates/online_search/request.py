@@ -1,28 +1,29 @@
-from utils.config import config
+from concurrent.futures import ThreadPoolExecutor
+from time import time
+
+from tqdm.asyncio import tqdm_asyncio
+
 import utils.constants as constants
+from driver.setup import setup_driver
+from driver.utils import search_submit
+from requests_custom.utils import get_soup_requests, close_session
+from updates.proxy import get_proxy, get_proxy_next
 from utils.channel import (
     format_channel_name,
     get_results_from_soup,
     get_results_from_soup_requests,
 )
-from utils.tools import (
-    check_url_by_patterns,
-    get_pbar_remaining,
-    get_soup,
-    format_url_with_cache,
-    add_url_info,
-)
-from updates.proxy import get_proxy, get_proxy_next
-from time import time
-from driver.setup import setup_driver
-from driver.utils import search_submit
+from utils.config import config
 from utils.retry import (
     retry_func,
     find_clickable_element_with_retry,
 )
-from tqdm.asyncio import tqdm_asyncio
-from concurrent.futures import ThreadPoolExecutor
-from requests_custom.utils import get_soup_requests, close_session
+from utils.tools import (
+    get_pbar_remaining,
+    get_soup,
+    format_url_with_cache,
+    add_url_info
+)
 
 if config.open_driver:
     try:
@@ -136,7 +137,7 @@ async def get_channels_by_online_search(names, callback=None):
                                         driver,
                                         (
                                             By.XPATH,
-                                            f'//a[contains(@href, "={page+1}") and contains(@href, "{name}")]',
+                                            f'//a[contains(@href, "={page + 1}") and contains(@href, "{name}")]',
                                         ),
                                         retries=1,
                                     )
@@ -151,7 +152,7 @@ async def get_channels_by_online_search(names, callback=None):
                                 continue
                             for result in results:
                                 url, date, resolution = result
-                                if url and check_url_by_patterns(url):
+                                if url:
                                     url = add_url_info(url, online_search_name)
                                     url = format_url_with_cache(url)
                                     info_list.append((url, date, resolution))
